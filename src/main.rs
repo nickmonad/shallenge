@@ -1,54 +1,100 @@
-use core_affinity as core;
-use hex;
-use sha2::{
-    digest::generic_array::{typenum::U32, GenericArray},
-    Digest, Sha256,
-};
+use anyhow::anyhow;
+use clap::{Parser, Subcommand};
+use core_affinity::{self as core, CoreId};
+use crossbeam::channel;
 use std::thread;
 
-fn main() {
-    let ids = core::get_core_ids().expect("get core ids");
-    let total = ids.len();
+mod hash;
+mod tui;
 
-    let username = "nickmonad/AppleM4Max/";
-    let handles = ids
-        .into_iter()
-        .map(|id| {
-            thread::spawn(move || {
-                let mut minimum: Option<GenericArray<u8, U32>> = None;
-                let mut with = 0;
+static MAX_MESSAGE_LENGTH: usize = 64;
 
-                let n = total as i32;
-                let b = id.id as i32;
-                for i in 0..500_000_000 {
-                    let nonce = b + (i * n);
-                    let preimage: Vec<u8> =
-                        [username.as_bytes(), &nonce.to_string().as_bytes()].concat();
+#[derive(Subcommand, Debug)]
+enum Command {
+    Bench,
+    Run,
+}
 
-                    let hash = Sha256::digest(&preimage);
+#[derive(Parser, Debug)]
+struct Args {
+    #[command(subcommand)]
+    command: Command,
 
-                    // compare hash against minimum, and store
-                    if let Some(min) = minimum {
-                        if hash.into_iter().lt(min.into_iter()) {
-                            minimum = Some(hash);
-                            with = nonce;
-                        }
-                    } else {
-                        // first pass, just apply
-                        minimum = Some(hash);
-                        with = nonce;
-                    }
-                }
+    #[arg(long)]
+    username: String,
 
-                // all done, print minimum
-                if let Some(min) = minimum {
-                    println!("{} -> {}", hex::encode(min), with);
-                }
-            })
-        })
-        .collect::<Vec<_>>();
+    #[arg(long)]
+    message: Option<String>,
 
-    for handle in handles {
-        handle.join().expect("join handle");
+    #[arg(long)]
+    iterations: Option<u64>,
+}
+
+impl Args {
+    fn validate(&self) -> anyhow::Result<()> {
+        if let Some(ref m) = self.message {
+            if m.len() > MAX_MESSAGE_LENGTH {
+                return Err(anyhow!(
+                    "message cannot be more than {MAX_MESSAGE_LENGTH} characters"
+                ));
+            }
+        }
+
+        Ok(())
     }
+}
+
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    args.validate()?;
+
+    match args.command {
+        Command::Bench => bench(args),
+        Command::Run => run(args),
+    }
+}
+
+fn bench(args: Args) -> anyhow::Result<()> {
+    let prefix = hash::concat(args.username.clone(), args.message.clone());
+    let (hash, nonce) = hash::worker(
+        CoreId { id: 0 },
+        1,
+        args.username,
+        args.message,
+        args.iterations,
+        None,
+    );
+
+    println!("minimum = {}/{} = {}", prefix, nonce, hex::encode(hash));
+    Ok(())
+}
+
+fn run(args: Args) -> anyhow::Result<()> {
+    let prefix = hash::concat(args.username.clone(), args.message.clone());
+
+    // worker thread reports minimum hash
+    let (r, results) = channel::unbounded::<hash::Result>();
+
+    // determine the number of cores (worker threads)
+    let cores = core::get_core_ids().expect("get core ids");
+    let n = cores.len();
+
+    // spawn a worker for each core
+    for core in cores.clone() {
+        let username = args.username.clone();
+        let message = args.message.clone();
+        let iterations = args.iterations.clone();
+        let results = r.clone();
+
+        let _ = thread::spawn(move || {
+            if !core::set_for_current(core) {
+                eprintln!("could not set core affinity for {}", core.id);
+            }
+
+            hash::worker(core, n, username, message, iterations, Some(results));
+        });
+    }
+
+    tui::run(tui::App::new(cores, results, prefix))?;
+    Ok(())
 }
