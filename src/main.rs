@@ -13,6 +13,7 @@ static MAX_MESSAGE_LENGTH: usize = 64;
 enum Command {
     Bench,
     Run,
+    Query,
 }
 
 #[derive(Parser, Debug)]
@@ -51,7 +52,22 @@ fn main() -> anyhow::Result<()> {
     match args.command {
         Command::Bench => bench(args),
         Command::Run => run(args),
+        Command::Query => query(),
     }
+}
+
+fn query() -> anyhow::Result<()> {
+    let cores = core::get_core_ids().expect("get core ids");
+    println!("cpu cores = {}", cores.len());
+
+    // try to pin thread to current core
+    if !core::set_for_current(*cores.get(0).expect("at least 1 core")) {
+        println!("warning: could not set core affinity");
+    } else {
+        println!("success! can set core affinity");
+    }
+
+    Ok(())
 }
 
 fn bench(args: Args) -> anyhow::Result<()> {

@@ -37,10 +37,10 @@ pub fn worker(
     // allocate a string buffer with enough capacity to fill up to 64 _total_ chars
     #[rustfmt::skip]
     let capacity = if let Some(ref m) = message { 64 - m.len() } else { 64 };
-    let mut buffer = String::with_capacity(capacity);
+    let mut noncebuf = String::with_capacity(capacity);
 
     // default minimum hash, set to max
-    let mut min: WithNonce = (Hash::from_iter(iter::repeat(u8::MAX)), buffer.clone());
+    let mut min: WithNonce = (Hash::from_iter(iter::repeat(u8::MAX)), noncebuf.clone());
 
     // build prefix used in hash calculation
     let prefix = concat(username, message);
@@ -64,7 +64,7 @@ pub fn worker(
             let m: u64 = nonce / 64;
             let r = nonce % 64;
 
-            buffer.push_str(BASE64[r as usize]);
+            noncebuf.push_str(BASE64[r as usize]);
             if m == 0 {
                 fit = true;
                 break;
@@ -83,19 +83,19 @@ pub fn worker(
         }
 
         // hash ...
-        let preimage: Vec<u8> = [&prefix, buffer.as_bytes()].concat();
+        let preimage: Vec<u8> = [&prefix, noncebuf.as_bytes()].concat();
         let hash = Sha256::digest(&preimage);
 
         // ... and compare to current minimum
         if hash.into_iter().lt(min.0.into_iter()) {
-            min = (hash, buffer.clone());
+            min = (hash, noncebuf.clone());
             if let Some(ref r) = results {
-                let _ = r.send((id, Some((hash, buffer.clone()))));
+                let _ = r.send((id, Some((hash, noncebuf.clone()))));
             }
         }
 
         // clear buffer for next iteration
-        buffer.clear();
+        noncebuf.clear();
     }
 
     // all done
