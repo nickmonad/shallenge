@@ -87,7 +87,7 @@ pub fn worker(
         let hash = Sha256::digest(&preimage);
 
         // ... and compare to current minimum
-        if hash.into_iter().lt(min.0.into_iter()) {
+        if is_less(&hash, &min.0) {
             min = (hash, noncebuf.clone());
             if let Some(ref r) = results {
                 let _ = r.send((id, Some((hash, noncebuf.clone()))));
@@ -104,6 +104,14 @@ pub fn worker(
     }
 
     return min;
+}
+
+pub fn max() -> WithNonce {
+    (Hash::from_iter(iter::repeat(u8::MAX)), "".into())
+}
+
+pub fn is_less(a: &Hash, b: &Hash) -> bool {
+    a.iter().lt(b.iter())
 }
 
 pub fn concat(username: String, message: Option<String>) -> String {

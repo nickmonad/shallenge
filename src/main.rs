@@ -111,6 +111,14 @@ fn run(args: Args) -> anyhow::Result<()> {
         });
     }
 
-    tui::run(tui::App::new(cores, results, prefix))?;
+    let minimum = tui::run(tui::App::new(cores, results, prefix.clone()))?;
+
+    println!(
+        "minimum = {} from {}/{}",
+        hex::encode(minimum.0),
+        prefix,
+        minimum.1
+    );
+
     Ok(())
 }

@@ -10,7 +10,7 @@ use ratatui::{
 };
 use std::{io, thread};
 
-pub fn run(mut app: App) -> io::Result<()> {
+pub fn run(mut app: App) -> io::Result<hash::WithNonce> {
     let mut terminal = ratatui::init();
     let result = app.run(&mut terminal);
 
@@ -19,6 +19,7 @@ pub fn run(mut app: App) -> io::Result<()> {
 }
 
 pub struct App {
+    minimum: hash::WithNonce,
     results: channel::Receiver<hash::Result>,
     display: Vec<hash::Result>,
     prefix: String,
@@ -30,15 +31,18 @@ impl App {
         results: channel::Receiver<hash::Result>,
         prefix: String,
     ) -> Self {
+        let minimum = hash::max();
         let display: Vec<hash::Result> = cores.iter().map(|core| (core.clone(), None)).collect();
+
         Self {
+            minimum,
             results,
             display,
             prefix,
         }
     }
 
-    pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+    pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<hash::WithNonce> {
         // event thread
         let (q, quit) = channel::unbounded::<bool>();
         let _ = thread::spawn(move || {
@@ -62,7 +66,15 @@ impl App {
             select! {
                 recv(self.results) -> result => {
                     if let Ok((core, hash)) = result {
-                        self.display[core.id] = (core, hash);
+                        if let Some(ref h) = hash {
+                            // check for global minimum
+                            if hash::is_less(&h.0, &self.minimum.0) {
+                                self.minimum = h.clone()
+                           }
+
+                            // set display value for core
+                            self.display[core.id] = (core, hash);
+                        }
                     }
                 }
                 recv(quit) -> _ => {
@@ -71,7 +83,7 @@ impl App {
             }
         }
 
-        Ok(())
+        Ok(self.minimum.clone())
     }
 
     fn draw(&self, frame: &mut Frame) {
