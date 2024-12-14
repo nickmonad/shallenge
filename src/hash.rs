@@ -46,6 +46,11 @@ pub fn worker(
     let prefix = concat(username, message);
     let prefix: Vec<u8> = [&prefix.as_bytes(), "/".as_bytes()].concat();
 
+    // allocate preimage buffer
+    // and fix the prefix at the beginning of the buffer
+    let mut preimage: Vec<u8> = Vec::with_capacity(prefix.len() + noncebuf.capacity());
+    preimage.extend_from_slice(&prefix);
+
     let n = n as u64;
     let base = id.id as u64;
 
@@ -82,11 +87,14 @@ pub fn worker(
             return min;
         }
 
-        // hash ...
-        let preimage: Vec<u8> = [&prefix, noncebuf.as_bytes()].concat();
-        let hash = Sha256::digest(&preimage);
+        let buf = noncebuf.as_bytes();
+        for b in buf.iter() {
+            preimage.push(*b);
+        }
 
-        // ... and compare to current minimum
+        let hash = Sha256::digest(&preimage[..(prefix.len() + buf.len())]);
+
+        // compare to current minimum
         if is_less(&hash, &min.0) {
             min = (hash, noncebuf.clone());
             if let Some(ref r) = results {
@@ -94,8 +102,9 @@ pub fn worker(
             }
         }
 
-        // clear buffer for next iteration
+        // clear buffers for next iteration
         noncebuf.clear();
+        preimage.truncate(prefix.len());
     }
 
     // all done
